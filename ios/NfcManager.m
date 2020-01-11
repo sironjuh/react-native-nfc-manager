@@ -4,21 +4,6 @@
 #import "React/RCTEventDispatcher.h"
 #import "React/RCTLog.h"
 
-int isSupported() {
-    bool result = NO;
-    if (@available(iOS 11.0, *)) {
-        @try {
-            if (NFCNDEFReaderSession.readingAvailable) {
-                result = YES;
-            }
-        }
-        @catch (NSException *exception) {
-            RCTLogError(@"Exception thrown during NfcManager.isSupported: %@", exception);
-        }
-    }
-    return result;
-}
-
 NSString* getHexString(NSData *data) {
     NSUInteger capacity = data.length * 2;
     NSMutableString *sbuf = [NSMutableString stringWithCapacity:capacity];
@@ -103,7 +88,7 @@ RCT_EXPORT_MODULE()
 
 - (NSArray *)dataToArray:(NSData *)data
 {
-    const unsigned char *dataBuffer = (const unsigned char *)[data bytes];
+    const unsigned char *dataBuffer = data ? (const unsigned char *)[data bytes] : NULL;
     
     if (!dataBuffer)
         return @[];
@@ -158,8 +143,8 @@ RCT_EXPORT_MODULE()
             id<NFCISO7816Tag> iso7816Tag = [tag asNFCISO7816Tag];
             [tagInfo setObject:getHexString(iso7816Tag.identifier) forKey:@"id"];
             [tagInfo setObject:iso7816Tag.initialSelectedAID forKey:@"initialSelectedAID"];
-            [tagInfo setObject:iso7816Tag.historicalBytes forKey:@"historicalBytes"];
-            [tagInfo setObject:iso7816Tag.applicationData forKey:@"applicationData"];
+            [tagInfo setObject:[self dataToArray:iso7816Tag.historicalBytes] forKey:@"historicalBytes"];
+            [tagInfo setObject:[self dataToArray:iso7816Tag.applicationData] forKey:@"applicationData"];
         } else if (tag.type == NFCTagTypeISO15693) {
             id<NFCISO15693Tag> iso15693Tag = [tag asNFCISO15693Tag];
             [tagInfo setObject:getHexString(iso15693Tag.identifier) forKey:@"id"];
@@ -294,10 +279,14 @@ RCT_EXPORT_MODULE()
 
 RCT_EXPORT_METHOD(isSupported: (NSString *)tech callback:(nonnull RCTResponseSenderBlock)callback)
 {
-    if (isSupported()) {
-        // iOS only supports Ndef starting from iOS 11.0 (on iPhone 7 onwards)
-        if ([tech isEqualToString:@""] || [tech isEqualToString:@"Ndef"]) {
-            callback(@[[NSNull null], @YES]);
+    if ([tech isEqualToString:@""] || [tech isEqualToString:@"Ndef"]) {
+        if (@available(iOS 11.0, *)) {
+            callback(@[[NSNull null], NFCNDEFReaderSession.readingAvailable ? @YES : @NO]);
+            return;
+        }
+    } else if ([tech isEqualToString:@"mifare"] || [tech isEqualToString:@"felica"] || [tech isEqualToString:@"iso15693"] || [tech isEqualToString:@"IsoDep"]) {
+        if (@available(iOS 13.0, *)) {
+            callback(@[[NSNull null], NFCTagReaderSession.readingAvailable ? @YES : @NO]);
             return;
         }
     }
@@ -307,13 +296,16 @@ RCT_EXPORT_METHOD(isSupported: (NSString *)tech callback:(nonnull RCTResponseSen
 
 RCT_EXPORT_METHOD(start: (nonnull RCTResponseSenderBlock)callback)
 {
-    if (isSupported()) {
-        NSLog(@"NfcManager initialized");
-        [self reset];
-        callback(@[]);
-    } else {
-        callback(@[@"Not support in this device", [NSNull null]]);
+    if (@available(iOS 11.0, *)) {
+        if (NFCNDEFReaderSession.readingAvailable) {
+            NSLog(@"NfcManager initialized");
+            [self reset];
+            callback(@[]);
+            return;
+        }
     }
+
+    callback(@[@"Not support in this device", [NSNull null]]);
 }
 
 RCT_EXPORT_METHOD(requestTechnology: (NSArray *)techs callback:(nonnull RCTResponseSenderBlock)callback)
@@ -417,6 +409,21 @@ RCT_EXPORT_METHOD(unregisterTagEventEx:(nonnull RCTResponseSenderBlock)callback)
     }
 }
 
+RCT_EXPORT_METHOD(invalidateSessionWithError:(NSString *)errorMessage callback:(nonnull RCTResponseSenderBlock)callback)
+{
+    if (@available(iOS 13.0, *)) {
+        if (session != nil) {
+            [session invalidateSessionWithErrorMessage: errorMessage];
+            callback(@[]);
+        } else if (sessionEx != nil) {
+            [sessionEx invalidateSessionWithErrorMessage: errorMessage];
+            callback(@[]);
+        } else {
+            callback(@[@"No active session", [NSNull null]]);
+        }
+    }
+}
+
 RCT_EXPORT_METHOD(getTag: (nonnull RCTResponseSenderBlock)callback)
 {
     if (@available(iOS 13.0, *)) {
@@ -438,21 +445,41 @@ RCT_EXPORT_METHOD(getTag: (nonnull RCTResponseSenderBlock)callback)
 RCT_EXPORT_METHOD(getNdefMessage: (nonnull RCTResponseSenderBlock)callback)
 {
     if (@available(iOS 13.0, *)) {
+        id<NFCNDEFTag> ndefTag = nil;
+        
         if (session != nil) {
             if (self->connectedNdefTag) {
-                [self->connectedNdefTag readNDEFWithCompletionHandler:^(NFCNDEFMessage *ndefMessage, NSError *error) {
-                    if (error) {
-                        callback(@[getErrorMessage(error), [NSNull null]]);
-                    } else {
-                        callback(@[[NSNull null], [self convertNdefMessage:ndefMessage]]);
-                    }
-                }];
-                return;
+                ndefTag = self->connectedNdefTag;
             }
-            callback(@[@"Not connected", [NSNull null]]);
-        } else {
-            callback(@[@"Not even registered", [NSNull null]]);
+        } else if (sessionEx != nil) {
+            if (sessionEx.connectedTag) {
+                id<NFCTag> tag = sessionEx.connectedTag;
+                if (@available(iOS 13.0, *)) {
+                    if (tag.type == NFCTagTypeMiFare) {
+                        ndefTag = [tag asNFCMiFareTag];
+                    } else if (tag.type == NFCTagTypeISO7816Compatible) {
+                        ndefTag = [tag asNFCISO7816Tag];
+                    } else if (tag.type == NFCTagTypeISO15693) {
+                        ndefTag = [tag asNFCISO15693Tag];
+                    } else if (tag.type == NFCTagTypeFeliCa) {
+                        ndefTag = [tag asNFCFeliCaTag];
+                    }
+                }
+            }
         }
+        
+        if (ndefTag) {
+            [ndefTag readNDEFWithCompletionHandler:^(NFCNDEFMessage *ndefMessage, NSError *error) {
+                if (error) {
+                    callback(@[getErrorMessage(error), [NSNull null]]);
+                } else {
+                    callback(@[[NSNull null], [self convertNdefMessage:ndefMessage]]);
+                }
+            }];
+            return;
+        }
+        
+        callback(@[@"No ndef available", [NSNull null]]);
     } else {
         callback(@[@"Not support in this device", [NSNull null]]);
     }
@@ -519,7 +546,7 @@ RCT_EXPORT_METHOD(sendMifareCommand:(NSArray *)bytes callback: (nonnull RCTRespo
     }
 }
 
-RCT_EXPORT_METHOD(sendCommandAPDU:(NSArray *)bytes callback: (nonnull RCTResponseSenderBlock)callback)
+RCT_EXPORT_METHOD(sendCommandAPDUBytes:(NSArray *)bytes callback: (nonnull RCTResponseSenderBlock)callback)
 {
     if (@available(iOS 13.0, *)) {
         if (sessionEx != nil) {
@@ -527,6 +554,47 @@ RCT_EXPORT_METHOD(sendCommandAPDU:(NSArray *)bytes callback: (nonnull RCTRespons
                 id<NFCISO7816Tag> iso7816Tag = [sessionEx.connectedTag asNFCISO7816Tag];
                 NSData *data = [self arrayToData:bytes];
                 NFCISO7816APDU *apdu = [[NFCISO7816APDU alloc] initWithData:data];
+                if (iso7816Tag) {
+                    [iso7816Tag sendCommandAPDU:apdu completionHandler:^(NSData* response, uint8_t sw1, uint8_t sw2, NSError* error) {
+                        if (error) {
+                            callback(@[getErrorMessage(error), [NSNull null]]);
+                        } else {
+                            callback(@[[NSNull null], [self dataToArray:response], [NSNumber numberWithInt:sw1], [NSNumber numberWithInt:sw2]]);
+                        }
+                    }];
+                    return;
+                } else {
+                    callback(@[@"not an iso7816 tag", [NSNull null]]);
+                }
+            }
+            callback(@[@"Not connected", [NSNull null]]);
+        } else {
+            callback(@[@"Not even registered", [NSNull null]]);
+        }
+    } else {
+        callback(@[@"Not support in this device", [NSNull null]]);
+    }
+}
+
+RCT_EXPORT_METHOD(sendCommandAPDU:(NSDictionary *)apduData callback: (nonnull RCTResponseSenderBlock)callback)
+{
+    if (@available(iOS 13.0, *)) {
+        if (sessionEx != nil) {
+            if (sessionEx.connectedTag) {
+                id<NFCISO7816Tag> iso7816Tag = [sessionEx.connectedTag asNFCISO7816Tag];
+                NSNumber *cla = [apduData objectForKey:@"cla"];
+                NSNumber *ins = [apduData objectForKey:@"ins"];
+                NSNumber *p1 = [apduData objectForKey:@"p1"];
+                NSNumber *p2 = [apduData objectForKey:@"p2"];
+                NSArray *dataArray = [apduData objectForKey:@"data"];
+                NSData *data = [self arrayToData:dataArray];
+                NSNumber *le = [apduData objectForKey:@"le"];
+                
+                /*
+                NFCISO7816APDU *apdu = [[NFCISO7816APDU alloc] initWithInstructionClass:0 instructionCode:0x84 p1Parameter:0 p2Parameter:0 data:[[NSData alloc] init] expectedResponseLength:8]
+                 */
+                
+                NFCISO7816APDU *apdu = [[NFCISO7816APDU alloc] initWithInstructionClass:[cla unsignedCharValue] instructionCode:[ins unsignedCharValue] p1Parameter:[p1 unsignedCharValue] p2Parameter:[p2 unsignedCharValue] data:data expectedResponseLength:[le integerValue]];
                 if (iso7816Tag) {
                     [iso7816Tag sendCommandAPDU:apdu completionHandler:^(NSData* response, uint8_t sw1, uint8_t sw2, NSError* error) {
                         if (error) {
