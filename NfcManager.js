@@ -30,6 +30,8 @@ const NfcTech = {
   MifareClassic: 'MifareClassic',
   MifareUltralight: 'MifareUltralight',
   MifareIOS: 'mifare',
+  Iso15693IOS: 'iso15693',
+  FelicaIOS: 'felica',
 }
 
 const NfcAdapter = {
@@ -42,10 +44,85 @@ const NfcAdapter = {
   FLAG_READER_NO_PLATFORM_SOUNDS: 0x100,
 };
 
+const Nfc15693RequestFlagIOS = {
+  DualSubCarriers: (1 << 0),
+  HighDataRate: (1 << 1),
+  ProtocolExtension: (1 << 3),
+  Select: (1 << 4),
+  Address: (1 << 5),
+  Option: (1 << 6),
+};
+
+class Iso15693HandlerIOS {
+  getSystemInfo(requestFlag) {
+    return callNative('iso15693_getSystemInfo', [requestFlag]);
+  }
+
+  readSingleBlock({flags, blockNumber}) {
+    return callNative('iso15693_readSingleBlock', [{flags, blockNumber}]);
+  }
+
+  writeSingleBlock({flags, blockNumber, dataBlock}) {
+    return callNative('iso15693_writeSingleBlock', [{flags, blockNumber, dataBlock}]);
+  }
+
+  lockBlock({flags, blockNumber}) {
+    return callNative('iso15693_lockBlock', [{flags, blockNumber}]);
+  }
+
+  writeAFI({flags, afi}) {
+    return callNative('iso15693_writeAFI', [{flags, afi}]);
+  }
+
+  lockAFI({flags}) {
+    return callNative('iso15693_lockAFI', [{flags}]);
+  }
+
+  writeDSFID({flags, dsfid}) {
+    return callNative('iso15693_writeDSFID', [{flags, dsfid}]);
+  }
+
+  lockDSFID({flags}) {
+    return callNative('iso15693_lockDSFID', [{flags}]);
+  }
+
+  resetToReady({flags}) {
+    return callNative('iso15693_resetToReady', [{flags}]);
+  }
+
+  select({flags}) {
+    return callNative('iso15693_select', [{flags}]);
+  }
+
+  stayQuite() {
+    return callNative('iso15693_stayQuiet');
+  }
+
+  customCommand({flags, customCommandCode, customRequestParameters}) {
+    return callNative('iso15693_customCommand', [{flags, customCommandCode, customRequestParameters}]);
+  }
+
+  extendedReadSingleBlock({flags, blockNumber}) {
+    return callNative('iso15693_extendedReadSingleBlock', [{flags, blockNumber}]);
+  }
+
+  extendedWriteSingleBlock({flags, blockNumber, dataBlock}) {
+    return callNative('iso15693_extendedWriteSingleBlock', [{flags, blockNumber, dataBlock}]);
+  }
+
+  extendedLockBlock({flags, blockNumber}) {
+    return callNative('iso15693_extendedLockBlock', [{flags, blockNumber}]);
+  }
+}
+
 class NfcManager {
   constructor() {
     this.cleanUpTagRegistration = false;
     this._subscribeNativeEvents();
+
+    if (Platform.OS === 'ios') {
+      this._iso15693HandlerIOS = new Iso15693HandlerIOS();
+    }
 
     // legacy stuff
     this._clientTagDiscoveryListener = null;
@@ -94,16 +171,11 @@ class NfcManager {
         tech = [tech];
       }
 
-      let hasNdefTech = tech.indexOf(NfcTech.Ndef) !== -1;
       let sessionAvailable = false;
 
       // check if required session is available
       if (Platform.OS === 'ios') {
-        if (hasNdefTech) {
-          sessionAvailable = await this._isSessionAvailableIOS();
-        } else {
-          sessionAvailable = await this._isSessionExAvailableIOS();
-        }
+        sessionAvailable = await this._isSessionExAvailableIOS();
       } else {
         sessionAvailable = await this._hasTagEventRegistrationAndroid();
       }
@@ -111,16 +183,11 @@ class NfcManager {
       // make sure we do register for tag event 
       if (!sessionAvailable) {
         if (Platform.OS === 'ios') {
-          if (hasNdefTech) {
-            await this.registerTagEvent(options);
-          } else {
-            await this._registerTagEventExIOS(options);
-          }
+          await this._registerTagEventExIOS(options);
         } else {
           await this.registerTagEvent(options);
         }
 
-        // the tag registration is 
         this.cleanUpTagRegistration = true;
       }
 
@@ -131,31 +198,33 @@ class NfcManager {
   }
 
   cancelTechnologyRequest = async () => {
-    await callNative('cancelTechnologyRequest');
+    if (!this.cleanUpTagRegistration) {
+      await callNative('cancelTechnologyRequest');
+      return;
+    }
 
-    if (this.cleanUpTagRegistration) {
-      this.cleanUpTagRegistration = false;
+    this.cleanUpTagRegistration = false;
 
-      if (Platform.OS === 'ios') {
-        let sessionAvailable = false;
+    if (Platform.OS === 'ios') {
+      let sessionAvailable = false;
 
-        // because we don't know which tech currently requested
-        // so we try both, and perform early return when hitting any
-        sessionAvailable = await this._isSessionExAvailableIOS();
-        if (sessionAvailable) {
-          await this._unregisterTagEventExIOS();
-          return;
-        }
+      // because we don't know which tech currently requested
+      // so we try both, and perform early return when hitting any
+      sessionAvailable = await this._isSessionExAvailableIOS();
+      if (sessionAvailable) {
+        await this._unregisterTagEventExIOS();
+        return;
+      }
 
-        sessionAvailable = await this._isSessionAvailableIOS();
-        if (sessionAvailable) {
-          await this.unregisterTagEvent();
-          return;
-        }
-      } else {
+      sessionAvailable = await this._isSessionAvailableIOS();
+      if (sessionAvailable) {
         await this.unregisterTagEvent();
         return;
       }
+    } else {
+      await callNative('cancelTechnologyRequest');
+      await this.unregisterTagEvent();
+      return;
     }
   }
 
@@ -179,6 +248,8 @@ class NfcManager {
     }
     callNative('setAlertMessage', [alertMessage]);
   }
+
+  invalidateSessionIOS = () => callNative('invalidateSession');
 
   invalidateSessionWithErrorIOS = (errorMessage='Error') => callNative('invalidateSessionWithError', [errorMessage]);
 
@@ -266,6 +337,16 @@ class NfcManager {
   // (iOS) NfcTech.MifareIOS API
   // -------------------------------------
   sendMifareCommandIOS = (bytes) => callNative('sendMifareCommand', [bytes]);
+
+  // -------------------------------------
+  // (iOS) NfcTech.FelicaIOS API
+  // -------------------------------------
+  sendFelicaCommandIOS = (bytes) => callNative('sendFelicaCommand', [bytes]);
+
+  // -------------------------------------
+  // (iOS) NfcTech.Iso15693IOS API
+  // -------------------------------------
+  getIso15693HandlerIOS = () => this._iso15693HandlerIOS;
 
   // -------------------------------------
   // (iOS) NfcTech.IsoDep API
@@ -384,4 +465,5 @@ export {
   NfcEvents,
   NfcAdapter,
   Ndef,
+  Nfc15693RequestFlagIOS,
 }

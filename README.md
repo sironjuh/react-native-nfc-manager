@@ -57,7 +57,24 @@ You will need to setup some capabilities / entitlement / plist stuff to enable N
 </array>
 ```
 
-## Example
+In the ISO18092 system codes for NFC Tag Reader Session, all FeliCa system codes used for reading must be entered in advance. Wildcards cannot be used.
+
+## Launch app on nfc event
+
+Note on getLaunchTagEvent: keep in mind that you can only create intent-filters for the very first NDEF record on an NFC tag! If your intent-filter doesn't match the FIRST record your app will launch but it won't get the tag data. Check out for details: 
+https://stackoverflow.com/questions/25504418/get-nfc-tag-with-ndef-android-application-record-aar/25510642
+
+Also you should add 
+```xml
+android:launchMode="singleTask"
+```
+to your manifest to prevent launching your app as another task when it is already running.
+
+## Demo project
+
+Please use [this repo](https://github.com/whitedogg13/nfc-test-app) as a quick start.
+
+## Example codes
 
 Look into `example` for the features you need.
 
