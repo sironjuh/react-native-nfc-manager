@@ -84,6 +84,8 @@ class NfcManagerAndroid extends NfcManagerBase {
   setTimeout = (timeout) =>
     handleNativeException(callNative('setTimeout', [timeout]));
 
+  getTimeout = () => handleNativeException(callNative('getTimeout'));
+
   connect = (techs) => handleNativeException(callNative('connect', [techs]));
 
   close = () => handleNativeException(callNative('close'));

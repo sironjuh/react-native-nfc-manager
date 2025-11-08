@@ -42,7 +42,7 @@ const DEFAULT_REGISTER_TAG_EVENT_OPTIONS = {
   invalidateAfterFirstRead: false,
   isReaderModeEnabled: false,
   readerModeFlags: 0,
-  readerModeDelay: 10,
+  readerModeDelay: 250,
 };
 
 function NotImpl() {
@@ -105,6 +105,8 @@ class NfcManagerBase {
   clearBackgroundTag = NotImpl;
 
   setAlertMessage = DoNothing;
+
+  getTimeout = DoNothing;
 
   async writeNdefMessage(bytes, options = {}) {
     return handleNativeException(callNative('writeNdefMessage', [bytes, options]));

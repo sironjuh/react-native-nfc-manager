@@ -744,10 +744,63 @@ class NfcManager extends ReactContextBaseJavaModule implements ActivityEventList
     }
 
     @ReactMethod
+    public void getTimeout(Callback callback) {
+        synchronized (this) {
+            if (techRequest != null) {
+                try {
+                    String tech = techRequest.getTechType();
+                    TagTechnology baseTechHandle = techRequest.getTechHandle();
+                    // TagTechnology is the base class for each tech (ex, NfcA, NfcB, IsoDep ...)
+                    // but it doesn't provide transceive in its interface, so we need to explicitly cast it
+                    switch (tech) {
+                        case "NfcA": {
+                            NfcA techHandle = (NfcA) baseTechHandle;
+                            int timeout = techHandle.getTimeout();
+                            callback.invoke(null, timeout);
+                            return;
+                        }
+                        case "NfcF": {
+                            NfcF techHandle = (NfcF) baseTechHandle;
+                            int timeout = techHandle.getTimeout();
+                            callback.invoke(null, timeout);
+                            return;
+                        }
+                        case "IsoDep": {
+                            IsoDep techHandle = (IsoDep) baseTechHandle;
+                            int timeout = techHandle.getTimeout();
+                            callback.invoke(null, timeout);
+                            return;
+                        }
+                        case "MifareClassic": {
+                            MifareClassic techHandle = (MifareClassic) baseTechHandle;
+                            int timeout = techHandle.getTimeout();
+                            callback.invoke(null, timeout);
+                            return;
+                        }
+                        case "MifareUltralight": {
+                            MifareUltralight techHandle = (MifareUltralight) baseTechHandle;
+                            int timeout = techHandle.getTimeout();
+                            callback.invoke(null, timeout);
+                            return;
+                        }
+                    }
+                    Log.d(LOG_TAG, "getTimeout not supported");
+                    callback.invoke(ERR_API_NOT_SUPPORT);
+                } catch (Exception ex) {
+                    Log.d(LOG_TAG, ex.toString());
+                    callback.invoke(ex.toString());
+                }
+            } else {
+                callback.invoke(ERR_NO_TECH_REQ);
+            }
+        }
+    }
+
+    @ReactMethod
     public void connect(ReadableArray techs, Callback callback){
         synchronized(this) {
             try {
-                techRequest = new TagTechnologyRequest(techs.toArrayList(), callback);
+                techRequest = new TagTechnologyRequest(techs.toArrayList(), null);
                 techRequest.connect(this.tag);
                 callback.invoke(null, null);
             } catch (Exception ex) {
@@ -1151,9 +1204,9 @@ class NfcManager extends ReactContextBaseJavaModule implements ActivityEventList
             try {
                 if (isReaderModeEnabled) {
                     if (enable) {
-                        Log.i(LOG_TAG, "enableReaderMode: " + readerModeFlags);
+                        Log.i(LOG_TAG, String.format("enableReaderMode, flags: %d, delay: %d ms", readerModeFlags, readerModeDelay));
                         Bundle readerModeExtras = new Bundle();
-                        readerModeExtras.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, readerModeDelay * 1000);
+                        readerModeExtras.putInt(NfcAdapter.EXTRA_READER_PRESENCE_CHECK_DELAY, readerModeDelay);
                         nfcAdapter.enableReaderMode(currentActivity, new NfcAdapter.ReaderCallback() {
                             @Override
                             public void onTagDiscovered(Tag tag) {
